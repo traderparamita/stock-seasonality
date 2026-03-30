@@ -37,6 +37,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════
 if mode == "📈 단일 종목 분석":
     from fundamentals import analyze_fundamentals
+    from supply_demand import analyze_supply_demand
 
     with st.sidebar:
         st.header("설정")
@@ -85,8 +86,14 @@ if mode == "📈 단일 종목 분석":
         with st.spinner("재무 분석 중..."):
             fa_result = analyze_fundamentals(ticker, ticker_name, market)
 
+        # 수급 분석
+        with st.spinner("수급 분석 중..."):
+            sd_result = analyze_supply_demand(ticker, ticker_name)
+
         # ── 탭 구성 ──
-        tab_season, tab_finance, tab_report = st.tabs(["📈 계절성 분석", "🏢 재무 분석", "📝 종합 리포트"])
+        tab_season, tab_finance, tab_supply, tab_report = st.tabs(
+            ["📈 계절성 분석", "🏢 재무 분석", "💰 수급 분석", "📝 종합 리포트"]
+        )
 
         # ── 탭 1: 계절성 분석 ──
         with tab_season:
@@ -169,12 +176,33 @@ if mode == "📈 단일 종목 분석":
                 st.pyplot(fig)
                 plt.close(fig)
 
-        # ── 탭 3: 종합 리포트 ──
+        # ── 탭 3: 수급 분석 ──
+        with tab_supply:
+            if sd_result.data is not None and not sd_result.data.empty:
+                mcols = st.columns(len(sd_result.metrics))
+                for col, (label, value) in zip(mcols, sd_result.metrics.items()):
+                    col.metric(label, value)
+
+                st.divider()
+                for title, fig in sd_result.figures:
+                    st.caption(title)
+                    st.pyplot(fig)
+                    plt.close(fig)
+
+                st.divider()
+                st.markdown(sd_result.report_text)
+            else:
+                st.warning("수급 데이터를 가져올 수 없습니다.")
+
+        # ── 탭 4: 종합 리포트 ──
         with tab_report:
             st.markdown(result.report_text)
             st.divider()
             if fa_result.report_text:
                 st.markdown(fa_result.report_text)
+            st.divider()
+            if sd_result.report_text:
+                st.markdown(sd_result.report_text)
 
     else:
         st.info("👈 사이드바에서 종목코드와 전략을 선택한 뒤 **분석 실행** 버튼을 누르세요.")
