@@ -29,7 +29,7 @@ st.title("📊 주식 전략 테스터")
 
 # ── 사이드바: 모드 선택 ───────────────────────────────────
 with st.sidebar:
-    mode = st.radio("모드", ["📈 단일 종목 분석", "🔍 계절성 스크리너", "⚖️ 종목 비교"], index=0)
+    mode = st.radio("모드", ["📈 단일 종목 분석", "🔍 계절성 스크리너", "⚖️ 종목 비교", "🏢 종목 분석"], index=0)
     st.divider()
 
 # ══════════════════════════════════════════════════════════
@@ -564,3 +564,144 @@ elif mode == "⚖️ 종목 비교":
         st.warning("종목코드를 입력하세요.")
     else:
         st.info("👈 사이드바에서 비교할 종목을 선택한 뒤 **비교 분석** 버튼을 누르세요.")
+
+# ══════════════════════════════════════════════════════════
+#  모드 4: 종목 분석 (소개 + 재무)
+# ══════════════════════════════════════════════════════════
+elif mode == "🏢 종목 분석":
+    from fundamentals import analyze_fundamentals
+
+    with st.sidebar:
+        st.header("종목 분석 설정")
+
+        # 스크리너 결과에서 불러오기
+        csv_path = "output/screener_q2.csv"
+        fa_presets = []
+        if os.path.exists(csv_path):
+            saved_df = pd.read_csv(csv_path, dtype={"종목코드": str})
+            fa_presets = [
+                f"{r['종목명']} ({r['종목코드']})"
+                for _, r in saved_df.head(30).iterrows()
+            ]
+
+        fa_input_mode = st.radio("종목 입력", ["스크리너 Top 종목 ", "직접 입력 "], key="fa_input")
+
+        if fa_input_mode == "스크리너 Top 종목 " and fa_presets:
+            fa_selected = st.multiselect("분석 종목", fa_presets, default=fa_presets[:5], key="fa_sel")
+            fa_codes = [s.split("(")[1].split(")")[0] for s in fa_selected]
+        else:
+            fa_raw = st.text_area(
+                "종목코드 (쉼표 구분) ",
+                value="298040,241710,006340,251970,009470,950140,036620,007540,196170,033100",
+                key="fa_raw",
+            )
+            fa_codes = [c.strip() for c in fa_raw.split(",") if c.strip()]
+
+        fa_run = st.button("🏢 재무 분석", use_container_width=True, type="primary")
+
+    if fa_run and fa_codes:
+        progress = st.progress(0, text="재무 데이터 수집 중...")
+
+        for i, code in enumerate(fa_codes):
+            progress.progress((i + 1) / len(fa_codes), text=f"{i+1}/{len(fa_codes)} 분석 중...")
+            name = get_ticker_name(code)
+            if not name:
+                st.warning(f"종목코드 '{code}' 없음, 건너뜀")
+                continue
+
+            # KOSPI/KOSDAQ 판별
+            try:
+                import FinanceDataReader as fdr
+                listing = fdr.StockListing("KOSPI")
+                if code in listing["Code"].values:
+                    market = "KS"
+                else:
+                    market = "KQ"
+            except Exception:
+                market = "KQ"
+
+            with st.spinner(f"{name} 재무 분석 중..."):
+                result = analyze_fundamentals(code, name, market)
+
+            # ── 기업 개요 ──
+            st.divider()
+            st.subheader(f"🏢 {name} ({code})")
+
+            info = result.company_info
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.markdown(f"**섹터**: {info.get('섹터', 'N/A')}")
+                st.markdown(f"**산업**: {info.get('산업', 'N/A')}")
+                st.markdown(f"**시가총액**: {info.get('시가총액', 'N/A')}")
+                st.markdown(f"**52주 최고/최저**: {info.get('52주 최고', 'N/A')} / {info.get('52주 최저', 'N/A')}")
+                st.markdown(f"**직원수**: {info.get('직원수', 'N/A')}")
+            with col2:
+                st.markdown("**사업 소개**")
+                st.caption(info.get("사업 소개", "정보 없음"))
+
+            # ── 핵심 지표 ──
+            mcols = st.columns(len(result.metrics))
+            for col, (label, value) in zip(mcols, result.metrics.items()):
+                col.metric(label, value)
+
+            # ── 재무제표 테이블 ──
+            if result.financials_df is not None:
+                st.markdown("**연간 재무제표 (억원)**")
+                display_df = result.financials_df.copy()
+                # 억원 단위 포맷 (EPS 제외)
+                for col in display_df.columns:
+                    display_df[col] = display_df.apply(
+                        lambda row: f"{row[col]:,.0f}" if pd.notna(row[col]) and row.name != "EPS"
+                        else (f"{row[col]:,.0f}" if pd.notna(row[col]) else "N/A"),
+                        axis=1,
+                    )
+                st.dataframe(display_df, use_container_width=True)
+
+            if result.quarterly_df is not None:
+                with st.expander("📊 분기별 실적 (억원)"):
+                    q_display = result.quarterly_df.copy()
+                    for col in q_display.columns:
+                        q_display[col] = q_display[col].apply(
+                            lambda v: f"{v:,.0f}" if pd.notna(v) else "N/A"
+                        )
+                    st.dataframe(q_display, use_container_width=True)
+
+            # ── 차트 (2열) ──
+            fig_pairs = list(zip(result.figures[::2], result.figures[1::2]))
+            remainders = result.figures[len(fig_pairs)*2:]
+
+            for (t1, f1), (t2, f2) in fig_pairs:
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.caption(t1)
+                    st.pyplot(f1)
+                    plt.close(f1)
+                with c2:
+                    st.caption(t2)
+                    st.pyplot(f2)
+                    plt.close(f2)
+
+            for title, fig in remainders:
+                st.caption(title)
+                st.pyplot(fig)
+                plt.close(fig)
+
+            # ── 재무 평가 보고서 ──
+            if result.report_text:
+                st.divider()
+                st.markdown(result.report_text)
+
+        progress.empty()
+
+    elif fa_run:
+        st.warning("종목코드를 입력하세요.")
+    else:
+        st.info("👈 사이드바에서 종목을 선택한 뒤 **재무 분석** 버튼을 누르세요.")
+        st.markdown("""
+        **제공 정보**
+        - 기업 개요: 섹터, 산업, 사업 소개
+        - 핵심 지표: 시가총액, PER, PBR, ROE, 배당수익률, 매출성장률
+        - 연간 재무제표: 매출, 영업이익, 순이익, EBITDA, 자산/부채, FCF
+        - 분기별 실적: 최근 8분기 매출/영업이익
+        - 차트: 실적 추이, 수익성 마진, 주가/거래량
+        """)
