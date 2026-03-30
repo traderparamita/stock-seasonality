@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from dataclasses import dataclass, field
 from matplotlib.figure import Figure
+from deep_translator import GoogleTranslator
 
 BILLION = 1e9
 HUNDRED_MILLION = 1e8  # 억
@@ -25,6 +26,16 @@ class FundamentalResult:
 def _safe_get(info: dict, key: str, default=None):
     v = info.get(key)
     return v if v is not None else default
+
+
+def _translate_to_ko(text: str) -> str:
+    """영문 텍스트를 한국어로 번역"""
+    if not text or text == "정보 없음":
+        return text
+    try:
+        return GoogleTranslator(source="en", target="ko").translate(text)
+    except Exception:
+        return text
 
 
 def _fmt_krw(val, unit="억"):
@@ -58,9 +69,9 @@ def analyze_fundamentals(ticker: str, ticker_name: str, market: str = "KQ") -> F
     result.company_info = {
         "종목명": ticker_name,
         "종목코드": ticker,
-        "섹터": _safe_get(info, "sector", "N/A"),
-        "산업": _safe_get(info, "industry", "N/A"),
-        "사업 소개": _safe_get(info, "longBusinessSummary", "정보 없음"),
+        "섹터": _translate_to_ko(_safe_get(info, "sector", "N/A")),
+        "산업": _translate_to_ko(_safe_get(info, "industry", "N/A")),
+        "사업 소개": _translate_to_ko(_safe_get(info, "longBusinessSummary", "정보 없음")),
         "시가총액": _fmt_krw(_safe_get(info, "marketCap", 0)),
         "52주 최고": f"{_safe_get(info, 'fiftyTwoWeekHigh', 'N/A'):,}" if isinstance(_safe_get(info, 'fiftyTwoWeekHigh'), (int, float)) else "N/A",
         "52주 최저": f"{_safe_get(info, 'fiftyTwoWeekLow', 'N/A'):,}" if isinstance(_safe_get(info, 'fiftyTwoWeekLow'), (int, float)) else "N/A",

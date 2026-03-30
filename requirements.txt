@@ -8,3 +8,4 @@ statsmodels
 streamlit
 finance-datareader
 yfinance
+deep-translator
