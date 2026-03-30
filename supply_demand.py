@@ -28,8 +28,15 @@ def fetch_investor_data(ticker: str, pages: int = 20) -> pd.DataFrame:
             url = f"https://finance.naver.com/item/frgn.naver?code={ticker}&page={page}"
             r = requests.get(url, headers=HEADERS, timeout=5)
             tables = pd.read_html(StringIO(r.text))
-            if len(tables) > 2:
-                all_data.append(tables[2])
+            # 날짜/종가가 포함된 수급 테이블 찾기 (페이지 구조 변경 대응)
+            target = None
+            for t in tables:
+                cols_str = " ".join(str(c) for c in t.columns)
+                if "날짜" in cols_str and "종가" in cols_str:
+                    target = t
+                    break
+            if target is not None:
+                all_data.append(target)
         except Exception:
             break
 
@@ -37,18 +44,49 @@ def fetch_investor_data(ticker: str, pages: int = 20) -> pd.DataFrame:
         return pd.DataFrame()
 
     raw = pd.concat(all_data, ignore_index=True)
+    # 멀티인덱스 컬럼 → 단일 레벨로 평탄화
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = [
+            "_".join(dict.fromkeys(str(c) for c in col)).strip("_")
+            for col in raw.columns
+        ]
     raw = raw.dropna(how="all")
 
-    # 컬럼 정리 (멀티인덱스 → 단일)
+    # 컬럼 매핑 (컬럼명에 키워드가 포함된 것을 찾아 매핑)
+    col_map = {}
+    for c in raw.columns:
+        cs = str(c)
+        if "날짜" in cs:
+            col_map["날짜"] = c
+        elif "종가" in cs and "종가" not in col_map:
+            col_map["종가"] = c
+        elif "등락률" in cs:
+            col_map["등락률"] = c
+        elif "거래량" in cs:
+            col_map["거래량"] = c
+        elif "기관" in cs:
+            col_map["기관순매매"] = c
+        elif "보유율" in cs:
+            col_map["외국인보유율"] = c
+        elif "보유주수" in cs or "보유주" in cs:
+            col_map["외국인보유주수"] = c
+        elif "외국인" in cs and "외국인순매매" not in col_map:
+            col_map["외국인순매매"] = c
+
+    required = ["날짜", "종가", "거래량", "기관순매매", "외국인순매매", "외국인보유주수", "외국인보유율"]
+    missing = [k for k in required if k not in col_map]
+    if missing:
+        return pd.DataFrame()
+
     df = pd.DataFrame()
-    df["날짜"] = raw.iloc[:, 0]
-    df["종가"] = raw.iloc[:, 1]
-    df["등락률"] = raw.iloc[:, 3]
-    df["거래량"] = raw.iloc[:, 4]
-    df["기관순매매"] = raw.iloc[:, 5]
-    df["외국인순매매"] = raw.iloc[:, 6]
-    df["외국인보유주수"] = raw.iloc[:, 7]
-    df["외국인보유율"] = raw.iloc[:, 8]
+    df["날짜"] = raw[col_map["날짜"]]
+    df["종가"] = raw[col_map["종가"]]
+    df["등락률"] = raw.get(col_map.get("등락률", ""), np.nan)
+    df["거래량"] = raw[col_map["거래량"]]
+    df["기관순매매"] = raw[col_map["기관순매매"]]
+    df["외국인순매매"] = raw[col_map["외국인순매매"]]
+    df["외국인보유주수"] = raw[col_map["외국인보유주수"]]
+    df["외국인보유율"] = raw[col_map["외국인보유율"]]
 
     # 타입 변환
     df["날짜"] = pd.to_datetime(df["날짜"], format="%Y.%m.%d", errors="coerce")
